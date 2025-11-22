@@ -1,4 +1,525 @@
+"""Enhanced AI agent that understands, asks questions, and helps"""
+    
+    if results_df is None or results_df.empty:
+        return {
+            "type": "error",
+            "message": "⚠️ No data loaded. Please ensure Master Reconciliation sheet exists and has data."
+        }
+    
+    import re
+    user_lower = user_message.lower().strip()
+    
+    # Extract MCF numbers from message
+    mcf_pattern = r'MCF-\d{8}-\d{4}'
+    mcfs_found = re.findall(mcf_pattern, user_message.upper())
+    
+    # ============================================================
+    # PATTERN 1: CP1/CP2 Information for specific MCF
+    # ============================================================
+    if any(word in user_lower for word in ["cp1", "cp2", "channel partner", "partner"]):
+        
+        if mcfs_found:
+            mcf = mcfs_found[0]
+            
+            # Search for MCF
+            mcf_row = results_df[results_df['MCF Number'].astype(str).str.upper() == mcf]
+            
+            if mcf_row.empty:
+                return {
+                    "type": "answer",
+                    "message": f"❌ **I couldn't find MCF {mcf} in the data.**\n\n"
+                               f"💡 **Suggestions:**\n"
+                               f"• Check if the MCF number is correct\n"
+                               f"• Try: 'Show me all MCFs' to see available MCFs\n"
+                               f"• The data has {len(results_df)} MCFs loaded"
+                }
+            
+            row = mcf_row.iloc[0]
+            
+            # Check if asking specifically about CP1 or CP2
+            asking_cp1 = "cp1" in user_lower and "cp2" not in user_lower
+            asking_cp2 = "cp2" in user_lower and "cp1" not in user_lower
+            
+            if asking_cp1:
+                cp1_name = row.get('CP1 Name', 'Not available')
+                cp1_code = row.get('CP1 Code', 'N/A')
+                cp1_expected = row.get('Expected CP1 Payout', 0)
+                cp1_actual = row.get('Actual CP1 Payout', 0)
+                
+                message = f"**🤝 CP1 (Channel Partner 1) for {mcf}:**\n\n"
+                message += f"👤 **Name:** {cp1_name}\n"
+                message += f"🔖 **Code:** {cp1_code}\n"
+                message += f"💰 **Expected Payout:** ₹{cp1_expected:,.0f}\n"
+                message += f"💰 **Actual Payout:** ₹{cp1_actual:,.0f}\n"
+                
+                variance = cp1_actual - cp1_expected if cp1_expected else 0
+                if variance != 0:
+                    message += f"📊 **Variance:** ₹{variance:,.0f} {'⚠️ Higher' if variance > 0 else '⚠️ Lower'}\n"
+                
+                message += f"\n📦 **Customer:** {row.get('Customer Name', 'N/A')}\n"
+                message += f"💵 **Deal P&L:** ₹{row.get('Net Profit/Loss', 0):,.0f}\n"
+                
+                message += f"\n💡 **Want to know about CP2?** Ask: 'Who is CP2 for {mcf}?'"
+                
+                return {"type": "answer", "message": message}
+            
+            elif asking_cp2:
+                cp2_name = row.get('CP2 Name', 'Not available')
+                cp2_code = row.get('CP2 Code', 'N/A')
+                cp2_expected = row.get('Expected CP2 Payout', 0)
+                cp2_actual = row.get('Actual CP2 Payout', 0)
+                
+                message = f"**🤝 CP2 (Channel Partner 2) for {mcf}:**\n\n"
+                message += f"👤 **Name:** {cp2_name}\n"
+                message += f"🔖 **Code:** {cp2_code}\n"
+                message += f"💰 **Expected Payout:** ₹{cp2_expected:,.0f}\n"
+                message += f"💰 **Actual Payout:** ₹{cp2_actual:,.0f}\n"
+                
+                variance = cp2_actual - cp2_expected if cp2_expected else 0
+                if variance != 0:
+                    message += f"📊 **Variance:** ₹{variance:,.0f} {'⚠️ Higher' if variance > 0 else '⚠️ Lower'}\n"
+                
+                message += f"\n📦 **Customer:** {row.get('Customer Name', 'N/A')}\n"
+                
+                if cp2_name == 'Not available' or not cp2_name or cp2_name == '':
+                    message += f"\nℹ️ **Note:** This MCF doesn't have a CP2 partner."
+                
+                return {"type": "answer", "message": message}
+            
+            else:
+                # Show both CP1 and CP2
+                message = f"**🤝 Channel Partners for {mcf}:**\n\n"
+                
+                message += f"**👥 CP1 (Channel Partner 1):**\n"
+                message += f"• Name: {row.get('CP1 Name', 'Not available')}\n"
+                message += f"• Code: {row.get('CP1 Code', 'N/A')}\n"
+                message += f"• Expected Payout: ₹{row.get('Expected CP1 Payout', 0):,.0f}\n"
+                message += f"• Actual Payout: ₹{row.get('Actual CP1 Payout', 0):,.0f}\n"
+                
+                cp1_var = row.get('CP1 Payout Variance', 0)
+                if cp1_var and abs(cp1_var) > 100:
+                    message += f"• Variance: ₹{cp1_var:,.0f} {'⚠️' if abs(cp1_var) > 1000 else ''}\n"
+                
+                message += f"\n**👥 CP2 (Channel Partner 2):**\n"
+                cp2_name = row.get('CP2 Name', '')
+                if not cp2_name or cp2_name == 'Not available':
+                    message += f"• ℹ️ No CP2 partner for this MCF\n"
+                else:
+                    message += f"• Name: {cp2_name}\n"
+                    message += f"• Code: {row.get('CP2 Code', 'N/A')}\n"
+                    message += f"• Expected Payout: ₹{row.get('Expected CP2 Payout', 0):,.0f}\n"
+                    message += f"• Actual Payout: ₹{row.get('Actual CP2 Payout', 0):,.0f}\n"
+                    
+                    cp2_var = row.get('CP2 Payout Variance', 0)
+                    if cp2_var and abs(cp2_var) > 100:
+                        message += f"• Variance: ₹{cp2_var:,.0f} {'⚠️' if abs(cp2_var) > 1000 else ''}\n"
+                
+                message += f"\n**📦 Customer:** {row.get('Customer Name', 'N/A')}\n"
+                message += f"**📊 Deal P&L:** ₹{row.get('Net Profit/Loss', 0):,.0f}\n"
+                
+                return {"type": "answer", "message": message}
+        
+        else:
+            # Asking about partners but no MCF specified
+            # Try to extract partner name
+            quoted = re.findall(r'["\']([^"\']+)["\']', user_message)
+            
+            if quoted:
+                partner_name = quoted[0]
+            else:
+                # Extract from message
+                stop_words = ['show', 'me', 'all', 'mcf', 'mcfs', 'for', 'partner', 'cp1', 'cp2', 'named', 'called', 'is', 'the', 'who']
+                words = [w for w in user_message.split() if w.lower() not in stop_words and len(w) > 2]
+                partner_name = ' '.join(words).strip() if words else ''
+            
+            if partner_name:
+                # Search for partner in CP1 and CP2 columns
+                cp1_matches = search_in_dataframe(results_df, 'CP1 Name', partner_name)
+                cp2_matches = search_in_dataframe(results_df, 'CP2 Name', partner_name)
+                
+                all_matches = pd.concat([cp1_matches, cp2_matches]).drop_duplicates(subset=['MCF Number'])
+                
+                if not all_matches.empty:
+                    total_payout_cp1 = cp1_matches['Actual CP1 Payout'].sum() if not cp1_matches.empty else 0
+                    total_payout_cp2 = cp2_matches['Actual CP2 Payout'].sum() if not cp2_matches.empty else 0
+                    total_payout = total_payout_cp1 + total_payout_cp2
+                    
+                    message = f"**🔍 Found {len(all_matches)} MCF(s) for partner '{partner_name}':**\n\n"
+                    
+                    for i, (_, row) in enumerate(all_matches.head(15).iterrows(), 1):
+                        message += f"**{i}. {row['MCF Number']}**\n"
+                        message += f"   👤 Customer: {row.get('Customer Name', 'N/A')}\n"
+                        
+                        is_cp1 = row['MCF Number'] in cp1_matches['MCF Number'].values
+                        is_cp2 = row['MCF Number'] in cp2_matches['MCF Number'].values
+                        
+                        if is_cp1:
+                            message += f"   🤝 Role: **CP1** - {row.get('CP1 Name', 'N/A')}\n"
+                            message += f"   💰 Payout: ₹{row.get('Actual CP1 Payout', 0):,.0f}\n"
+                        
+                        if is_cp2:
+                            message += f"   🤝 Role: **CP2** - {row.get('CP2 Name', 'N/A')}\n"
+                            message += f"   💰 Payout: ₹{row.get('Actual CP2 Payout', 0):,.0f}\n"
+                        
+                        message += f"   📊 P&L: ₹{row.get('Net Profit/Loss', 0):,.0f}\n\n"
+                    
+                    if len(all_matches) > 15:
+                        message += f"... and {len(all_matches) - 15} more MCFs\n\n"
+                    
+                    message += f"**💼 Summary for '{partner_name}':**\n"
+                    message += f"• Total MCFs: {len(all_matches)}\n"
+                    message += f"• Total Payouts: ₹{total_payout:,.0f}\n"
+                    message += f"• As CP1: {len(cp1_matches)} deals (₹{total_payout_cp1:,.0f})\n"
+                    message += f"• As CP2: {len(cp2_matches)} deals (₹{total_payout_cp2:,.0f})\n"
+                    
+                    return {"type": "answer", "message": message}
+                else:
+                    # No matches - suggest alternatives
+                    available_partners = pd.concat([
+                        results_df['CP1 Name'].dropna(),
+                        results_df['CP2 Name'].dropna()
+                    ]).unique()
+                    
+                    # Find similar names
+                    similar = [p for p in available_partners if partner_name.lower() in str(p).lower()][:5]
+                    
+                    message = f"❌ **I couldn't find any MCFs for partner '{partner_name}'.**\n\n"
+                    
+                    if similar:
+                        message += f"💡 **Did you mean one of these?**\n"
+                        for p in similar:
+                            message += f"• {p}\n"
+                        message += f"\n**Try:** 'Show MCFs for partner \"{similar[0]}\"'"
+                    else:
+                        message += f"💡 **Try:**\n"
+                        message += f"• 'Show me all partners' to see available names\n"
+                        message += f"• Check spelling or try partial name"
+                    
+                    return {"type": "answer", "message": message}
+            else:
+                return {
+                    "type": "answer",
+                    "message": "🤔 **I'd love to help you find partner information!**\n\n"
+                               "**Please tell me:**\n"
+                               "• Which MCF number? (e.g., MCF-20250428-0588)\n"
+                               "• Or which partner name? (e.g., 'Kaushalya')\n\n"
+                               "**Examples:**\n"
+                               "• 'Who is CP1 for MCF-20250428-0588?'\n"
+                               "• 'Show all MCFs for partner Kaushalya'\n"
+                               "• 'CP1 and CP2 details for MCF-20250325-0148'"
+                }
+    
+    # ============================================================
+    # PATTERN 2: Customer Information
+    # ============================================================
+    elif any(word in user_lower for word in ["customer", "client"]):
+        
+        if mcfs_found:
+            # Find customer for MCF
+            mcf = mcfs_found[0]
+            mcf_row = results_df[results_df['MCF Number'].astype(str).str.upper() == mcf]
+            
+            if mcf_row.empty:
+                return {
+                    "type": "answer",
+                    "message": f"❌ **MCF {mcf} not found in data.**\n\n"
+                               f"💡 Try: 'Show me all MCFs' to see what's available"
+                }
+            
+            row = mcf_row.iloc[0]
+            
+            message = f"**👤 Customer Information for {mcf}:**\n\n"
+            message += f"**Name:** {row.get('Customer Name', 'Not available')}\n"
+            message += f"**Product:** {row.get('Loan Product', 'N/A')}\n"
+            message += f"**Loan Amount:** ₹{row.get('Loan Amount', 0):,.0f}\n"
+            message += f"**Deal P&L:** ₹{row.get('Net Profit/Loss', 0):,.0f}\n\n"
+            
+            message += f"**🤝 Partners:**\n"
+            message += f"• CP1: {row.get('CP1 Name', 'N/A')}\n"
+            if row.get('CP2 Name'):
+                message += f"• CP2: {row.get('CP2 Name', 'N/A')}\n"
+            
+            message += f"\n💡 **Want more details?** Ask: 'Show full details for {mcf}'"
+            
+            return {"type": "answer", "message": message}
+        
+        else:
+            # Find MCF for customer
+            quoted = re.findall(r'["\']([^"\']+)["\']', user_message)
+            
+            if quoted:
+                customer_name = quoted[0]
+            else:
+                stop_words = ['what', 'is', 'the', 'mcf', 'number', 'for', 'customer', 'client', 'named', 'called', 'of', 'with', 'name', 'show', 'me']
+                words = [w for w in user_message.split() if w.lower() not in stop_words and len(w) > 2]
+                customer_name = ' '.join(words).strip() if words else ''
+            
+            if customer_name:
+                matches = search_in_dataframe(results_df, 'Customer Name', customer_name)
+                
+                if not matches.empty:
+                    message = f"**🔍 Found {len(matches)} MCF(s) for customer '{customer_name}':**\n\n"
+                    
+                    for i, (_, row) in enumerate(matches.iterrows(), 1):
+                        message += f"**{i}. {row['MCF Number']}**\n"
+                        message += f"   👤 Customer: {row.get('Customer Name', 'N/A')}\n"
+                        message += f"   📦 Product: {row.get('Loan Product', 'N/A')}\n"
+                        message += f"   💰 Loan: ₹{row.get('Loan Amount', 0):,.0f}\n"
+                        message += f"   📊 P&L: ₹{row.get('Net Profit/Loss', 0):,.0f}\n\n"
+                    
+                    return {"type": "answer", "message": message}
+                else:
+                    available_customers = results_df['Customer Name'].dropna().unique()
+                    similar = [c for c in available_customers if customer_name.lower() in str(c).lower()][:5]
+                    
+                    message = f"❌ **No MCFs found for customer '{customer_name}'.**\n\n"
+                    
+                    if similar:
+                        message += f"💡 **Similar customers:**\n"
+                        for c in similar:
+                            message += f"• {c}\n"
+                    else:
+                        message += f"💡 Try checking the spelling or use partial name"
+                    
+                    return {"type": "answer", "message": message}
+            else:
+                return {
+                    "type": "answer",
+                    "message": "🤔 **I can help you find customer information!**\n\n"
+                               "**Please tell me:**\n"
+                               "• MCF number to find customer? (e.g., MCF-20250428-0588)\n"
+                               "• Or customer name to find MCF? (e.g., 'ABC Ltd')\n\n"
+                               "**Examples:**\n"
+                               "• 'Who is the customer for MCF-20250428-0588?'\n"
+                               "• 'What is MCF number for customer \"ABC Ltd\"?'"
+                }
+    
+    # ============================================================
+    # PATTERN 3: MCF Details
+    # ============================================================
+    elif mcfs_found and any(word in user_lower for word in ["details", "info", "about", "tell me", "show me"]):
+        mcf = mcfs_found[0]
+        mcf_row = results_df[results_df['MCF Number'].astype(str).str.upper() == mcf]
+        
+        if mcf_row.empty:
+            return {
+                "type": "answer",
+                "message": f"❌ **MCF {mcf} not found.**\n\n"
+                           f"The data has {len(results_df)} MCFs. Try 'Show me all MCFs'"
+            }
+        
+        row = mcf_row.iloc[0]
+        
+        message = f"**📋 Complete Details for {mcf}**\n\n"
+        
+        message += f"**👤 Customer Information:**\n"
+        message += f"• Name: {row.get('Customer Name', 'N/A')}\n"
+        message += f"• Product: {row.get('Loan Product', 'N/A')}\n"
+        message += f"• Loan Amount: ₹{row.get('Loan Amount', 0):,.0f}\n\n"
+        
+        message += f"**💰 Revenue:**\n"
+        message += f"• Expected: ₹{row.get('Expected Disbursed Gross Revenue', 0):,.0f}\n"
+        message += f"• Actual: ₹{row.get('Disbursed Gross Revenue', 0):,.0f}\n"
+        if 'Revenue Variance' in row.index:
+            var = row.get('Revenue Variance', 0)
+            if var != 0:
+                message += f"• Variance: ₹{var:,.0f} {'⚠️' if abs(var) > 5000 else ''}\n"
+        message += f"• Invoice Amount: ₹{row.get('Taxable Amount (Invoice)', 0):,.0f}\n\n"
+        
+        message += f"**🤝 Channel Partners:**\n"
+        message += f"• CP1: {row.get('CP1 Name', 'N/A')} (₹{row.get('Actual CP1 Payout', 0):,.0f})\n"
+        if row.get('CP2 Name'):
+            message += f"• CP2: {row.get('CP2 Name', 'N/A')} (₹{row.get('Actual CP2 Payout', 0):,.0f})\n"
+        
+        message += f"\n**📊 Bottom Line:**\n"
+        pl = row.get('Net Profit/Loss', 0)
+        status = "✅ Profit" if pl > 0 else "🔴 Loss" if pl < 0 else "⚪ Break-even"
+        message += f"• Net P&L: **₹{pl:,.0f}** {status}\n"
+        
+        if row.get('Payout Status'):
+            message += f"• Payout Status: {row.get('Payout Status')}\n"
+        
+        return {"type": "answer", "message": message}
+    
+    # ============================================================
+    # PATTERN 4: Show Lists
+    # ============================================================
+    elif "show" in user_lower or "list" in user_lower:
+        
+        if "profit" in user_lower:
+            profit_df = results_df[results_df['Net Profit/Loss'] > 0].sort_values('Net Profit/Loss', ascending=False)
+            
+            if profit_df.empty:
+                return {"type": "answer", "message": "✅ No profitable MCFs in current data."}
+            
+            message = f"**📈 Profitable MCFs ({len(profit_df)} found):**\n\n"
+            
+            for i, (_, row) in enumerate(profit_df.head(20).iterrows(), 1):
+                message += f"**{i}. {row['MCF Number']}**\n"
+                message += f"   👤 {row.get('Customer Name', 'N/A')}\n"
+                message += f"   💰 Profit: **₹{row.get('Net Profit/Loss', 0):,.0f}**\n"
+                message += f"   🤝 CP1: {row.get('CP1 Name', 'N/A')}\n\n"
+            
+            if len(profit_df) > 20:
+                message += f"... and {len(profit_df) - 20} more\n"
+            
+            return {"type": "answer", "message": message}
+        
+        elif "loss" in user_lower:
+            loss_df = results_df[results_df['Net Profit/Loss'] < 0].sort_values('Net Profit/Loss')
+            
+            if loss_df.empty:
+                return {"type": "answer", "message": "✅ No loss-making MCFs! All deals are profitable."}
+            
+            message = f"**📉 Loss-Making MCFs ({len(loss_df)} found):**\n\n"
+            
+            for i, (_, row) in enumerate(loss_df.head(20).iterrows(), 1):
+                message += f"**{i}. {row['MCF Number']}**\n"
+                message += f"   👤 {row.get('Customer Name', 'N/A')}\n"
+                message += f"   🔴 Loss: **₹{row.get('Net Profit/Loss', 0):,.0f}**\n"
+                message += f"   🤝 CP1: {row.get('CP1 Name', 'N/A')}\n\n"
+            
+            if len(loss_df) > 20:
+                message += f"... and {len(loss_df) - 20} more\n"
+            
+            return {"type": "answer", "message": message}
+        
+        elif "partner" in user_lower or "cp1" in user_lower or "cp2" in user_lower:
+            # Show all unique partners
+            cp1_list = results_df['CP1 Name'].dropna().unique().tolist()
+            cp2_list = results_df['CP2 Name'].dropna().unique().tolist()
+            all_partners = sorted(set([p for p in cp1_list + cp2_list if p and p != 'Not available']))
+            
+            message = f"**👥 All Channel Partners ({len(all_partners)} unique):**\n\n"
+            
+            for i, partner in enumerate(all_partners[:30], 1):
+                cp1_count = len(results_df[results_df['CP1 Name'] == partner])
+                cp2_count = len(results_df[results_df['CP2 Name'] == partner])
+                total_deals = cp1_count + cp2_count
+                
+                message += f"{i}. **{partner}**\n"
+                message += f"   • Total Deals: {total_deals} (CP1: {cp1_count}, CP2: {cp2_count})\n\n"
+            
+            if len(all_partners) > 30:
+                message += f"... and {len(all_partners) - 30} more partners\n"
+            
+            message += f"\n💡 **To see deals for a partner:** 'Show MCFs for partner [name]'"
+            
+            return {"type": "answer", "message": message}
+        
+        elif "mcf" in user_lower or "all" in user_lower:
+            message = f"**📋 All MCFs ({len(results_df)} total):**\n\n"
+            
+            for i, (_, row) in enumerate(results_df.head(30).iterrows(), 1):
+                pl = row.get('Net Profit/Loss', 0)
+                status = "✅" if pl > 0 else "🔴" if pl < 0 else "⚪"
+                
+                message += f"{i}. **{row['MCF Number']}** {status}\n"
+                message += f"   👤 {row.get('Customer Name', 'N/A')}\n"
+                message += f"   📊 ₹{pl:,.0f}\n\n"
+            
+            if len(results_df) > 30:
+                message += f"... and {len(results_df) - 30} more MCFs\n"
+            
+            message += f"\n💡 **For specific info:** 'Show details of MCF-[number]'"
+            
+            return {"type": "answer", "message": message}
+    
+    # ============================================================
+    # PATTERN 5: Summary
+    # ============================================================
+    elif "summary" in user_lower or ("total" in user_lower and "pl" in user_lower):
+        total_pl = results_df['Net Profit/Loss'].sum()
+        profitable = len(results_df[results_df['Net Profit/Loss'] > 0])
+        losses = len(results_df[results_df['Net Profit/Loss'] < 0])
+        avg_pl = results_df['Net Profit/Loss'].mean()
+        max_profit = results_df['Net Profit/Loss'].max()
+        max_loss = results_df['Net Profit/Loss'].min()
+        
+        message = f"""**📊 P&L Summary Report:**
+
+**Overall Performance:**
+• Total MCFs: {len(results_df)}
+• Total P&L: **₹{total_pl:,.0f}** {'✅' if total_pl > 0 else '🔴'}
+• Average P&L: ₹{avg_pl:,.0f}
+
+**Breakdown:**
+• Profitable: {profitable} MCFs ({profitable/len(results_df)*100:.1f}%)
+• Losses: {losses} MCFs ({losses/len(results_df)*100:.1f}%)
+
+**Extremes:**
+• Best Deal: ₹{max_profit:,.0f}
+• Worst Deal: ₹{max_loss:,.0f}
+
+💡 **Want details?** Ask me about specific MCFs or partners!
 """
+        return {"type": "answer", "message": message}
+    
+    # ============================================================
+    # PATTERN 6: Actions
+    # ============================================================
+    elif "cover" in user_lower and "loss" in user_lower:
+        if len(mcfs_found) >= 2:
+            loss_mcf = mcfs_found[0]
+            profit_mcf = mcfs_found[1]
+        else:
+            loss_df = results_df[results_df['Net Profit/Loss'] < 0].sort_values('Net Profit/Loss')
+            profit_df = results_df[results_df['Net Profit/Loss'] > 0].sort_values('Net Profit/Loss', ascending=False)
+            
+            if loss_df.empty:
+                return {"type": "answer", "message": "✅ No losses to cover! All deals are profitable."}
+            if profit_df.empty:
+                return {"type": "answer", "message": "❌ No profitable MCFs available to cover losses."}
+            
+            loss_mcf = loss_df.iloc[0]['MCF Number']
+            profit_mcf = profit_df.iloc[0]['MCF Number']
+        
+        action_results = execute_sheet_action(
+            "cover_loss",
+            {"loss_mcf": loss_mcf, "profit_mcf": profit_mcf},
+            spreadsheet,
+            results_df
+        )
+        
+        return {
+            "type": "action",
+            "explanation": f"Covering loss from **{loss_mcf}** with profit from **{profit_mcf}**",
+            "results": action_results
+        }
+    
+    elif "mark" in user_lower and "review" in user_lower:
+        if not mcfs_found:
+            return {"type": "error", "message": "Please specify an MCF number to mark as reviewed"}
+        
+        mcf = mcfs_found[0]
+        action_results = execute_sheet_action(
+            "mark_reviewed",
+            {"mcf": mcf},
+            spreadsheet,
+            results_df
+        )
+        
+        return {
+            "type": "action",
+            "explanation": f"Marking **{mcf}** as reviewed",
+            "results": action_results
+        }
+    
+    # ============================================================
+    # FALLBACK: Helpful Response
+    # ============================================================
+    else:
+        return {
+            "type": "answer",
+            "message": f"""🤔 **I'm here to help! I can assist you with:**
+
+**🔍 Find Information:**
+• "What is CP1 for MCF-20250428-0588?"
+• "Who is the customer for MCF-[number]?"
+• "Show all MCFs for partner Kaushalya"
+• "Show me details of MCF-[number]"
+
+**📊 View Lists:**"""
 P&L RECONCILIATION AI AGENT - WEB APP
 Standalone application with public URL
 
@@ -271,6 +792,36 @@ def execute_sheet_action(action_type, params, spreadsheet, results_df):
     
     except Exception as e:
         return [{"status": "error", "message": f"❌ Error: {str(e)}"}]
+
+def search_in_dataframe(df, column, search_term):
+    """Smart search with fuzzy matching"""
+    if column not in df.columns:
+        return pd.DataFrame()
+    
+    # Convert to string and lowercase
+    search_term_lower = str(search_term).lower().strip()
+    
+    # Try exact match first
+    exact_match = df[df[column].astype(str).str.lower() == search_term_lower]
+    if not exact_match.empty:
+        return exact_match
+    
+    # Try contains match
+    contains_match = df[df[column].astype(str).str.lower().str.contains(search_term_lower, na=False, regex=False)]
+    if not contains_match.empty:
+        return contains_match
+    
+    # Try word-by-word match
+    words = search_term_lower.split()
+    if len(words) > 1:
+        mask = df[column].astype(str).str.lower().apply(
+            lambda x: all(word in x for word in words)
+        )
+        word_match = df[mask]
+        if not word_match.empty:
+            return word_match
+    
+    return pd.DataFrame()
 
 def chat_with_ai(user_message, results_df, spreadsheet, model):
     """Enhanced chat with smart pattern matching and AI fallback"""
