@@ -117,7 +117,7 @@ def init_services(spreadsheet_id, creds_dict, gemini_key):
         
         # Gemini
         genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
         
         return spreadsheet, model, None
     except Exception as e:
@@ -281,82 +281,171 @@ def chat_with_ai(user_message, results_df, spreadsheet, model):
             "message": "No data loaded. Please ensure Master Reconciliation sheet exists."
         }
     
-    # Build context for AI
-    context = f"""You are a P&L reconciliation AI assistant with the ability to make changes to Google Sheets.
+    user_lower = user_message.lower()
+    
+    # Handle simple queries without AI (faster and more reliable)
+    if "profit" in user_lower and "show" in user_lower:
+        profit_df = results_df[results_df['Net Profit/Loss'] > 0].sort_values('Net Profit/Loss', ascending=False)
+        
+        if profit_df.empty:
+            message = "No profitable MCFs found."
+        else:
+            message = f"**Found {len(profit_df)} profitable MCFs:**\n\n"
+            for i, (_, row) in enumerate(profit_df.head(20).iterrows(), 1):
+                message += f"{i}. **{row['MCF Number']}** - {row.get('Customer Name', 'N/A')} - **₹{row['Net Profit/Loss']:,.0f}**\n"
+            
+            if len(profit_df) > 20:
+                message += f"\n... and {len(profit_df) - 20} more profitable MCFs"
+        
+        return {"type": "answer", "message": message}
+    
+    elif "loss" in user_lower and "show" in user_lower:
+        loss_df = results_df[results_df['Net Profit/Loss'] < 0].sort_values('Net Profit/Loss')
+        
+        if loss_df.empty:
+            message = "✅ No loss-making MCFs found!"
+        else:
+            message = f"**Found {len(loss_df)} loss-making MCFs:**\n\n"
+            for i, (_, row) in enumerate(loss_df.head(20).iterrows(), 1):
+                message += f"{i}. **{row['MCF Number']}** - {row.get('Customer Name', 'N/A')} - **₹{row['Net Profit/Loss']:,.0f}**\n"
+            
+            if len(loss_df) > 20:
+                message += f"\n... and {len(loss_df) - 20} more loss MCFs"
+        
+        return {"type": "answer", "message": message}
+    
+    elif "summary" in user_lower or "total" in user_lower:
+        total_pl = results_df['Net Profit/Loss'].sum()
+        profitable = len(results_df[results_df['Net Profit/Loss'] > 0])
+        losses = len(results_df[results_df['Net Profit/Loss'] < 0])
+        avg_pl = results_df['Net Profit/Loss'].mean()
+        max_profit = results_df['Net Profit/Loss'].max()
+        max_loss = results_df['Net Profit/Loss'].min()
+        
+        message = f"""**📊 P&L Summary:**
 
-AVAILABLE DATA:
+**Overall:**
+- Total MCFs: {len(results_df)}
+- Total P&L: **₹{total_pl:,.0f}**
+- Average P&L: ₹{avg_pl:,.0f}
+
+**Breakdown:**
+- Profitable Deals: {profitable} MCFs
+- Loss-Making Deals: {losses} MCFs
+
+**Extremes:**
+- Highest Profit: ₹{max_profit:,.0f}
+- Highest Loss: ₹{max_loss:,.0f}
+"""
+        return {"type": "answer", "message": message}
+    
+    elif "cover" in user_lower and "loss" in user_lower:
+        # Extract MCF numbers if mentioned
+        import re
+        mcf_pattern = r'MCF-\d{8}-\d{4}'
+        mcfs = re.findall(mcf_pattern, user_message.upper())
+        
+        if len(mcfs) >= 2:
+            loss_mcf = mcfs[0]
+            profit_mcf = mcfs[1]
+        else:
+            # Auto-select biggest loss and profit
+            loss_df = results_df[results_df['Net Profit/Loss'] < 0].sort_values('Net Profit/Loss')
+            profit_df = results_df[results_df['Net Profit/Loss'] > 0].sort_values('Net Profit/Loss', ascending=False)
+            
+            if loss_df.empty:
+                return {"type": "answer", "message": "✅ No losses to cover!"}
+            if profit_df.empty:
+                return {"type": "answer", "message": "❌ No profitable MCFs available to cover losses."}
+            
+            loss_mcf = loss_df.iloc[0]['MCF Number']
+            profit_mcf = profit_df.iloc[0]['MCF Number']
+        
+        # Execute cover action
+        action_results = execute_sheet_action(
+            "cover_loss",
+            {"loss_mcf": loss_mcf, "profit_mcf": profit_mcf},
+            spreadsheet,
+            results_df
+        )
+        
+        return {
+            "type": "action",
+            "explanation": f"I'll cover the loss from **{loss_mcf}** using profit from **{profit_mcf}**",
+            "results": action_results
+        }
+    
+    elif "mark" in user_lower and "review" in user_lower:
+        import re
+        mcf_pattern = r'MCF-\d{8}-\d{4}'
+        mcfs = re.findall(mcf_pattern, user_message.upper())
+        
+        if not mcfs:
+            return {"type": "error", "message": "Please specify an MCF number (e.g., 'Mark MCF-20250404-1026 as reviewed')"}
+        
+        mcf = mcfs[0]
+        
+        action_results = execute_sheet_action(
+            "mark_reviewed",
+            {"mcf": mcf},
+            spreadsheet,
+            results_df
+        )
+        
+        return {
+            "type": "action",
+            "explanation": f"Marking **{mcf}** as reviewed",
+            "results": action_results
+        }
+    
+    else:
+        # Use AI for complex queries
+        try:
+            # Build context for AI
+            context = f"""You are a P&L reconciliation assistant. Answer this question based on the data:
+
+USER QUESTION: {user_message}
+
+DATA SUMMARY:
 - Total MCFs: {len(results_df)}
 - Total P&L: ₹{results_df['Net Profit/Loss'].sum():,.2f}
 - Profitable: {len(results_df[results_df['Net Profit/Loss'] > 0])}
 - Losses: {len(results_df[results_df['Net Profit/Loss'] < 0])}
 
-Sample MCFs (first 5):
-{results_df.head(5)[['MCF Number', 'Customer Name', 'Net Profit/Loss']].to_json(orient='records')}
+Sample data:
+{results_df.head(5)[['MCF Number', 'Customer Name', 'Net Profit/Loss']].to_string()}
 
-USER REQUEST: {user_message}
-
-CAPABILITIES:
-1. Answer questions about data
-2. Make changes to Google Sheets:
-   - cover_loss: Cover a loss MCF with a profit MCF
-   - mark_reviewed: Mark an MCF as reviewed
-   - update_value: Update any column value
-
-RESPONSE FORMAT:
-If user wants information, return:
-{{"type": "answer", "message": "your answer here"}}
-
-If user wants to make changes, return:
-{{"type": "action", "explanation": "what you will do", "action": {{"type": "cover_loss|mark_reviewed|update_value", "params": {{...}}}}}}
-
-EXAMPLES:
-"Show me loss MCFs" → {{"type": "answer", "message": "..."}}
-"Cover loss from MCF-001 with MCF-002" → {{"type": "action", "action": {{"type": "cover_loss", "params": {{"loss_mcf": "MCF-001", "profit_mcf": "MCF-002"}}}}}}
-"Mark MCF-003 as reviewed" → {{"type": "action", "action": {{"type": "mark_reviewed", "params": {{"mcf": "MCF-003"}}}}}}
-
-Return ONLY valid JSON, no markdown.
+Provide a clear, helpful answer. Format numbers with ₹ symbol and commas.
 """
-    
-    try:
-        response = model.generate_content(context)
-        response_text = response.text.strip()
-        
-        # Clean JSON
-        if "```json" in response_text:
-            json_str = response_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in response_text:
-            json_str = response_text.split("```")[1].split("```")[0].strip()
-        else:
-            json_str = response_text
-        
-        result = json.loads(json_str)
-        
-        if result.get("type") == "action":
-            # Execute the action
-            action = result.get("action", {})
-            action_results = execute_sheet_action(
-                action.get("type"),
-                action.get("params", {}),
-                spreadsheet,
-                results_df
-            )
+            
+            response = model.generate_content(context)
             
             return {
-                "type": "action",
-                "explanation": result.get("explanation", "Executing action..."),
-                "results": action_results
+                "type": "answer",
+                "message": response.text
             }
-        else:
+        
+        except Exception as e:
+            # Fallback response
             return {
                 "type": "answer",
-                "message": result.get("message", "I couldn't process that request.")
+                "message": f"""I can help you with:
+
+**📊 View Data:**
+- "Show me all profitable MCFs"
+- "Show me all loss MCFs"
+- "Give me a summary"
+
+**✏️ Make Changes:**
+- "Cover loss from MCF-XXX with MCF-YYY"
+- "Mark MCF-XXX as reviewed"
+
+**Current Stats:**
+- Total MCFs: {len(results_df)}
+- Total P&L: ₹{results_df['Net Profit/Loss'].sum():,.0f}
+
+Try one of the commands above!"""
             }
-    
-    except Exception as e:
-        return {
-            "type": "error",
-            "message": f"Error processing request: {str(e)}"
-        }
 
 # Main App UI
 st.markdown("""
@@ -607,5 +696,4 @@ st.markdown("""
     <p>🤖 P&L Reconciliation AI Agent v1.0</p>
     <p style="font-size: 12px;">Built with ❤️ for Urban Money Pvt Ltd | Powered by Gemini AI</p>
 </div>
-
 """, unsafe_allow_html=True)
