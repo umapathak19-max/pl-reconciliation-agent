@@ -117,7 +117,7 @@ def init_services(spreadsheet_id, creds_dict, gemini_key):
         
         # Gemini
         genai.configure(api_key=gemini_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
         
         return spreadsheet, model, None
     except Exception as e:
@@ -607,4 +607,5 @@ st.markdown("""
     <p>🤖 P&L Reconciliation AI Agent v1.0</p>
     <p style="font-size: 12px;">Built with ❤️ for Urban Money Pvt Ltd | Powered by Gemini AI</p>
 </div>
+
 """, unsafe_allow_html=True)
